@@ -38,6 +38,8 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	input.Name = strings.TrimSpace(input.Name)
+	input.Email = strings.TrimSpace(input.Email)
 
 	user, err := h.service.Create(input)
 	if err != nil {

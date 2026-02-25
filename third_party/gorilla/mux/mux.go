@@ -17,7 +17,6 @@ type Router struct {
 
 // Route represents a route definition.
 type Route struct {
-	router  *Router
 	pattern string
 	handler http.HandlerFunc
 	methods map[string]struct{}
@@ -31,7 +30,6 @@ func NewRouter() *Router {
 // HandleFunc registers a path pattern with a handler function.
 func (r *Router) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) *Route {
 	route := &Route{
-		router:  r,
 		pattern: normalize(pattern),
 		handler: handler,
 		methods: map[string]struct{}{},
@@ -51,22 +49,28 @@ func (rt *Route) Methods(methods ...string) *Route {
 // ServeHTTP implements http.Handler.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	requestPath := normalize(req.URL.Path)
+	pathMatched := false
 
 	for _, route := range r.routes {
 		vars, ok := match(route.pattern, requestPath)
 		if !ok {
 			continue
 		}
+		pathMatched = true
 
 		if len(route.methods) > 0 {
 			if _, exists := route.methods[req.Method]; !exists {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
+				continue
 			}
 		}
 
 		ctx := context.WithValue(req.Context(), varsContextKey, vars)
 		route.handler(w, req.WithContext(ctx))
+		return
+	}
+
+	if pathMatched {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
