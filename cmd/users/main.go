@@ -6,7 +6,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"go-lang-basics/internal/db"
 	"go-lang-basics/internal/handlers"
 	"go-lang-basics/internal/repository"
 	"go-lang-basics/internal/services"
@@ -15,13 +14,7 @@ import (
 func main() {
 	router := mux.NewRouter()
 
-	cfg := db.NewConfigFromEnv()
-	postgresClient := db.NewClient(cfg)
-	if err := postgresClient.Init(); err != nil {
-		log.Fatal(err)
-	}
-
-	userRepo := repository.NewPostgresUserRepository(postgresClient)
+	userRepo := repository.NewInMemoryUserRepository()
 	userService := services.NewUserService(userRepo)
 	userHandler := handlers.NewUserHandler(userService)
 	userHandler.RegisterRoutes(router)

@@ -29,10 +29,10 @@ func (s *UserService) Create(input models.CreateUserInput) (models.User, error) 
 	if strings.TrimSpace(input.Email) == "" {
 		return models.User{}, ErrInvalidEmail
 	}
-	return s.repo.Create(input)
+	return s.repo.Create(input), nil
 }
 
-func (s *UserService) List() ([]models.User, error) {
+func (s *UserService) List() []models.User {
 	return s.repo.List()
 }
 

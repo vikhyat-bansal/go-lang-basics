@@ -41,7 +41,7 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.service.Create(input)
 	if err != nil {
-		h.handleDomainError(w, err)
+		utils.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -49,12 +49,7 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) list(w http.ResponseWriter, _ *http.Request) {
-	users, err := h.service.List()
-	if err != nil {
-		h.handleDomainError(w, err)
-		return
-	}
-	utils.JSON(w, http.StatusOK, users)
+	utils.JSON(w, http.StatusOK, h.service.List())
 }
 
 func (h *UserHandler) getByID(w http.ResponseWriter, r *http.Request) {

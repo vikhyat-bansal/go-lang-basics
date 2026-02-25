@@ -1,11 +1,10 @@
 package repository
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
+	"sync"
+	"time"
 
-	"go-lang-basics/internal/db"
 	"go-lang-basics/internal/models"
 )
 
@@ -13,130 +12,95 @@ var ErrUserNotFound = errors.New("user not found")
 
 // UserRepository provides persistence operations for users.
 type UserRepository interface {
-	Create(input models.CreateUserInput) (models.User, error)
-	List() ([]models.User, error)
+	Create(input models.CreateUserInput) models.User
+	List() []models.User
 	GetByID(id int) (models.User, error)
 	Update(id int, input models.UpdateUserInput) (models.User, error)
 	Delete(id int) error
 }
 
-// PostgresUserRepository stores users in PostgreSQL.
-type PostgresUserRepository struct {
-	client *db.Client
+// InMemoryUserRepository stores users in memory.
+type InMemoryUserRepository struct {
+	mu     sync.RWMutex
+	nextID int
+	users  map[int]models.User
 }
 
-func NewPostgresUserRepository(client *db.Client) *PostgresUserRepository {
-	return &PostgresUserRepository{client: client}
+func NewInMemoryUserRepository() *InMemoryUserRepository {
+	return &InMemoryUserRepository{
+		nextID: 1,
+		users:  make(map[int]models.User),
+	}
 }
 
-func (r *PostgresUserRepository) Create(input models.CreateUserInput) (models.User, error) {
-	query := fmt.Sprintf(`
-		SELECT row_to_json(t)
-		FROM (
-			INSERT INTO users (name, email)
-			VALUES ('%s', '%s')
-			RETURNING id, name, email, created_at, updated_at
-		) t;`, db.EscapeLiteral(input.Name), db.EscapeLiteral(input.Email))
+func (r *InMemoryUserRepository) Create(input models.CreateUserInput) models.User {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	payload, err := r.client.QueryValue(query)
-	if err != nil {
-		return models.User{}, err
+	now := time.Now().UTC()
+	user := models.User{
+		ID:        r.nextID,
+		Name:      input.Name,
+		Email:     input.Email,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
-	var user models.User
-	if err := json.Unmarshal([]byte(payload), &user); err != nil {
-		return models.User{}, err
+	r.users[user.ID] = user
+	r.nextID++
+	return user
+}
+
+func (r *InMemoryUserRepository) List() []models.User {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	users := make([]models.User, 0, len(r.users))
+	for _, user := range r.users {
+		users = append(users, user)
+	}
+	return users
+}
+
+func (r *InMemoryUserRepository) GetByID(id int) (models.User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	user, ok := r.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
 	}
 	return user, nil
 }
 
-func (r *PostgresUserRepository) List() ([]models.User, error) {
-	query := `
-		SELECT COALESCE(json_agg(t), '[]'::json)
-		FROM (
-			SELECT id, name, email, created_at, updated_at
-			FROM users
-			ORDER BY id
-		) t;`
+func (r *InMemoryUserRepository) Update(id int, input models.UpdateUserInput) (models.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	payload, err := r.client.QueryValue(query)
-	if err != nil {
-		return nil, err
-	}
-
-	users := make([]models.User, 0)
-	if err := json.Unmarshal([]byte(payload), &users); err != nil {
-		return nil, err
-	}
-	return users, nil
-}
-
-func (r *PostgresUserRepository) GetByID(id int) (models.User, error) {
-	query := fmt.Sprintf(`
-		SELECT COALESCE(row_to_json(t)::text, '')
-		FROM (
-			SELECT id, name, email, created_at, updated_at
-			FROM users
-			WHERE id = %d
-		) t;`, id)
-
-	payload, err := r.client.QueryValue(query)
-	if err != nil {
-		return models.User{}, err
-	}
-	if payload == "" {
+	user, ok := r.users[id]
+	if !ok {
 		return models.User{}, ErrUserNotFound
 	}
 
-	var user models.User
-	if err := json.Unmarshal([]byte(payload), &user); err != nil {
-		return models.User{}, err
+	if input.Name != "" {
+		user.Name = input.Name
 	}
+	if input.Email != "" {
+		user.Email = input.Email
+	}
+	user.UpdatedAt = time.Now().UTC()
+
+	r.users[id] = user
 	return user, nil
 }
 
-func (r *PostgresUserRepository) Update(id int, input models.UpdateUserInput) (models.User, error) {
-	query := fmt.Sprintf(`
-		SELECT COALESCE(row_to_json(t)::text, '')
-		FROM (
-			UPDATE users
-			SET name = COALESCE(NULLIF('%s', ''), name),
-				email = COALESCE(NULLIF('%s', ''), email),
-				updated_at = NOW()
-			WHERE id = %d
-			RETURNING id, name, email, created_at, updated_at
-		) t;`, db.EscapeLiteral(input.Name), db.EscapeLiteral(input.Email), id)
+func (r *InMemoryUserRepository) Delete(id int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	payload, err := r.client.QueryValue(query)
-	if err != nil {
-		return models.User{}, err
-	}
-	if payload == "" {
-		return models.User{}, ErrUserNotFound
-	}
-
-	var user models.User
-	if err := json.Unmarshal([]byte(payload), &user); err != nil {
-		return models.User{}, err
-	}
-	return user, nil
-}
-
-func (r *PostgresUserRepository) Delete(id int) error {
-	query := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM (
-			DELETE FROM users
-			WHERE id = %d
-			RETURNING id
-		) t;`, id)
-
-	result, err := r.client.QueryValue(query)
-	if err != nil {
-		return err
-	}
-	if result == "0" {
+	if _, ok := r.users[id]; !ok {
 		return ErrUserNotFound
 	}
+	delete(r.users, id)
 	return nil
 }
